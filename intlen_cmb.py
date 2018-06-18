@@ -2,6 +2,7 @@
 # [180607 - Justin Bray] Original code
 # [180608 - Anna Scaife] Updated to include scipy integration [not always successfully]
 # [180618 - Justin Bray] Implemented efficient scipy integration; pruned dead code; changed structure of functions underneath get_intlen to be a bit more general.
+# [180618 - Justin Bray] Implemented muon-muon pair production.
 
 
 
@@ -13,6 +14,7 @@ from scipy.integrate import quad
 
 # Physical constants.
 m_e = 9.11e-31 # kg; electron mass
+m_mu = 1.88e-28 # kg; muon mass
 q_e = 1.67e-19 # C; electron charge
 c = 3e8 # m/s; speed of light
 sigma_t = 6.65e-29 # m^2; Thomson cross-section
@@ -35,7 +37,7 @@ def logquad(func, a, b, **kwargs):
 
 # ------------------------------------------------------------------------------
 
-def get_sigma_pp(s):
+def get_sigma_pp(s, m_l):
 
   """
   Calculate p-p pair production cross-section, per berestetskii1982,
@@ -43,46 +45,49 @@ def get_sigma_pp(s):
   https://www.astro.umd.edu/~miller/teaching/astr688m/lecture03.pdf
   """
 
-  v = np.sqrt(1. - (m_e*c**2)**2 / (s/4.))
-  sigma_pp = 3./16. * sigma_t * (1. - v**2) * ( (3.-v**4)\
+  v = np.sqrt(1. - (m_l*c**2)**2 / (s/4.))
+  sigma_pp = 3./16. * sigma_t * (m_e/m_l)**2 * (1. - v**2) * ( (3.-v**4)\
             * np.log( (1.+v)/(1.-v) ) - 2.*v*(2.-v**2)) # m^2; p-p cross-section
+  # Note: function above has been modified to scale sigma_t by (m_e/m_l)**2.
+  # Justification: Thomson cross-section has a 1/m_e^2 factor in it, so this
+  #  scales correctly for other lepton masses.
 
   return sigma_pp
 
 # ------------------------------------------------------------------------------
 
-def s_integrand(s):
+def s_integrand(s, m_l):
 
   """
   Define the final integrand, over s, from eqn 23 of protheroe1996.
   """
 
-  integrand = s * get_sigma_pp(s) # J^2 m^2
+  integrand = s * get_sigma_pp(s, m_l) # J^2 m^2
 
   return integrand
 
 # ------------------------------------------------------------------------------
 
-def s_integral(E, eps):
+def s_integral(E, eps, m_l):
 
   """
   Calculate the final integral, over s, from eqn 23 of protheroe1996.
   """
 
   # protheroe1996, eqn 26:
-  smin = (2.*m_e*c**2)**2
+  smin = (2.*m_l*c**2)**2
 
   # J^2; maximum CoM energy^2; protheroe1996, eqn 28:
   smax = 4*E*eps
 
   # protheroe1996, eqn 23:
-  integral = logquad(s_integrand, smin, smax)[0] # J^4 m^2
+  integral = logquad(s_integrand, smin, smax, args=(m_l))[0] # J^4 m^2
 
   return integral
 
 # ------------------------------------------------------------------------------
 
-def eps_integrand(eps, E, get_Neps):
+def eps_integrand(eps, E, get_Neps, m_l):
 
   """
   Define the integrand, over epsilon, from eqn 23 of protheroe1996.
@@ -91,42 +96,42 @@ def eps_integrand(eps, E, get_Neps):
   # get the differential photon number density, protheroe1996, eqn 24:
   Neps = get_Neps(eps) # photons m^-3 J^-1
 
-  integrand = Neps * eps**-2 * s_integral(E, eps) # J/m
+  integrand = Neps * eps**-2 * s_integral(E, eps, m_l) # J/m
 
   return integrand
 
 # ------------------------------------------------------------------------------
 
-def eps_integral(E, get_Neps):
+def eps_integral(E, get_Neps, m_l):
 
   """
   Calculate the final integral, over epsilon, from eqn 23 of protheroe1996.
   """
 
   # protheroe1996, eqn 27:
-  epsmin = (2*m_e*c**2)**2 / (4*E) # Joules
+  epsmin = (2*m_l*c**2)**2 / (4*E) # Joules
   epsmax = 1e10*epsmin # J; target photon energy above majority of effect
   #epsmax = np.inf
 
   # protheroe1996, eqn 23:
-  integral = logquad(eps_integrand, epsmin, epsmax, args=(E, get_Neps))[0] # J^2/m
+  integral = logquad(eps_integrand, epsmin, epsmax, args=(E, get_Neps, m_l))[0] # J^2/m
 
   return integral
 
 # ------------------------------------------------------------------------------
 
-def get_intlen_pp(E, get_Neps):
+def get_intlen_pp(E, get_Neps, m_l=m_e): # default lepton mass m_l is m_e
 
   """
   Find interaction length for pair production for photons of given energy,
   from eqn 23 of protheroe1996.
   """
 
-  return 8*E**2 / eps_integral(E, get_Neps) # m
+  return 8*E**2 / eps_integral(E, get_Neps, m_l) # m
 
 # ------------------------------------------------------------------------------
 
-def get_intlen(E, get_Neps, use_pp=True, use_muon=False, use_4e=False):
+def get_intlen(E, get_Neps, use_pp=True, use_mu=False, use_4e=False):
 
   """
   Find interaction length for photons of given energy, using provided get_Neps
@@ -140,17 +145,17 @@ def get_intlen(E, get_Neps, use_pp=True, use_muon=False, use_4e=False):
   else:
     intlen_pp = 1e99
 
-  if use_muon:
-    assert False, 'Muon pair production not yet implemented.' # TODO: implement
+  if use_mu:
+    intlen_mu = get_intlen_pp(E, get_Neps, m_l=m_mu)
   else:
-    intlen_muon = 1e99
+    intlen_mu = 1e99
 
   if use_4e:
     assert False, 'Double pair production not yet implemented.' # TODO: implement
   else:
     intlen_4e = 1e99
 
-  return 1./(1./intlen_pp + 1./intlen_muon + 1./intlen_4e)
+  return 1./(1./intlen_pp + 1./intlen_mu + 1./intlen_4e)
 
 # ------------------------------------------------------------------------------
 
@@ -189,17 +194,23 @@ if __name__ == "__main__":
     E = 10**np.linspace(13,22,20) # eV; photon energy
     E *= q_e # eV->J
 
-    # calculate mean interaction length for each energy:
-    intlen = [get_intlen(x, get_Neps_CMB) for x in E]
-    intlen = np.array(intlen)
-    intlen/=Mpc_in_m
+    # calculate mean interaction length for each energy, for e+/e- production:
+    intlen_pp = [get_intlen(x, get_Neps_CMB) for x in E]
+    intlen_pp = np.array(intlen_pp)
+    intlen_pp/=Mpc_in_m
+
+    # calculate mean interaction length for each energy, for mu+/mu- production:
+    intlen_mu = [get_intlen(x, get_Neps_CMB, use_pp=False, use_mu=True) for x in E]
+    intlen_mu = np.array(intlen_mu)
+    intlen_mu/=Mpc_in_m
 
     # plot results:
     pl.subplot(111)
-    pl.plot(E/q_e, intlen)
+    pl.plot(E/q_e, intlen_pp)
+    pl.plot(E/q_e, intlen_mu)
     pl.xlabel('Photon energy (eV)')
     pl.ylabel('Interaction length (Mpc)')
     pl.loglog()
     ymin,ymax = pl.ylim()
-    pl.ylim(ymin,1e5*ymin)
+    pl.ylim(ymin,1e7*ymin)
     pl.show()
