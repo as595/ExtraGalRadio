@@ -1,12 +1,12 @@
 # Calculate gamma-ray interaction length for photon-photon pair production on the cosmic microwave background.
 # [180607 - Justin Bray] Original code
 # [180608 - Anna Scaife] Updated to include scipy integration [not always successfully]
+# [180618 - Justin Bray] Implemented efficient scipy integration; pruned dead code; changed structure of functions underneath get_intlen to be a bit more general.
 
 
 
 import pylab as pl
 import numpy as np
-import scipy.integrate as integrate
 from scipy.integrate import quad
 
 # ------------------------------------------------------------------------------
@@ -20,6 +20,18 @@ T_CMB = 2.725 # K; temperature of cosmic microwave background
 h = 6.626e-34 # Js; Planck constant
 k = 1.38e-23 # J/K; Boltzmann constant
 Mpc_in_m = 3.086e22 # m; 1 Mpc
+
+# ------------------------------------------------------------------------------
+
+def logquad(func, a, b, **kwargs):
+
+  """
+  Perform scipy.integrate.quad more efficiently on a function that's better-behaved in log space.
+  """
+
+  # Perform integral $\int y dx$ by transforming variables x->log(x), y->log(y).
+
+  return quad(lambda x,*args: np.exp(x + np.log(func(np.exp(x),*args))), np.log(a), np.log(b), **kwargs)
 
 # ------------------------------------------------------------------------------
 
@@ -59,43 +71,33 @@ def s_integral(E, eps):
 
   # protheroe1996, eqn 26:
   smin = (2.*m_e*c**2)**2
-  smin*= 1. + 1e-12 # small fudge factor to avoid infinities
 
   # J^2; maximum CoM energy^2; protheroe1996, eqn 28:
   smax = 4*E*eps
 
-  # check limits:
-  assert np.log10(smax/smin) < 10, 'Probably too coarse in the smin->smax integral.'
-  if smax < smin: return 0.
-
-  # numerical integration for checking:
-  #s = np.exp( np.linspace(np.log(smin), np.log(smax), 500) )
-  #integrand = s * get_sigma_pp(s)
-  #integral = np.sum(0.5*(integrand[:-1]+integrand[1:])*np.diff(s))
-
   # protheroe1996, eqn 23:
-  integral = quad(s_integrand, smin, smax, limit=500)[0]
+  integral = logquad(s_integrand, smin, smax)[0] # J^4 m^2
 
   return integral
 
 # ------------------------------------------------------------------------------
 
-def eps_integrand(eps, E):
+def eps_integrand(eps, E, get_Neps):
 
   """
   Define the integrand, over epsilon, from eqn 23 of protheroe1996.
   """
 
   # get the differential photon number density, protheroe1996, eqn 24:
-  Neps = get_Neps(eps)
+  Neps = get_Neps(eps) # photons m^-3 J^-1
 
-  integrand = Neps * eps**-2 * s_integral(E, eps)
+  integrand = Neps * eps**-2 * s_integral(E, eps) # J/m
 
   return integrand
 
 # ------------------------------------------------------------------------------
 
-def eps_integral(E):
+def eps_integral(E, get_Neps):
 
   """
   Calculate the final integral, over epsilon, from eqn 23 of protheroe1996.
@@ -107,32 +109,52 @@ def eps_integral(E):
   #epsmax = np.inf
 
   # protheroe1996, eqn 23:
-  eps = np.exp( np.linspace(np.log(epsmin), np.log(epsmax), 500) )
-  Neps = get_Neps(eps)
-
-  integrand = Neps * eps**-2 * np.array([s_integral(E, x) for x in eps])
-  integral = np.sum(0.5*(integrand[:-1]+integrand[1:])*np.diff(eps))
-
-  # protheroe1996, eqn 23:
-  # scipy integration doesn't work because integrand is very highly localised.
-  #integral = quad(eps_integrand, epsmin, epsmax, args=(E), limit=500)[0]
+  integral = logquad(eps_integrand, epsmin, epsmax, args=(E, get_Neps))[0] # J^2/m
 
   return integral
 
 # ------------------------------------------------------------------------------
 
-def get_intlen(E):
+def get_intlen_pp(E, get_Neps):
 
   """
-  Find interaction length for photons of given energy,
+  Find interaction length for pair production for photons of given energy,
   from eqn 23 of protheroe1996.
   """
 
-  return 8*E**2 / eps_integral(E) # m
+  return 8*E**2 / eps_integral(E, get_Neps) # m
 
 # ------------------------------------------------------------------------------
 
-def get_Neps(eps):
+def get_intlen(E, get_Neps, use_pp=True, use_muon=False, use_4e=False):
+
+  """
+  Find interaction length for photons of given energy, using provided get_Neps
+  function to determine photon background, and incorporating interaction types
+  specified by flags (use_pp for pair production, use_muon for muon pair
+  production, use_4e for double pair production).
+  """
+
+  if use_pp:
+    intlen_pp = get_intlen_pp(E, get_Neps)
+  else:
+    intlen_pp = 1e99
+
+  if use_muon:
+    assert False, 'Muon pair production not yet implemented.' # TODO: implement
+  else:
+    intlen_muon = 1e99
+
+  if use_4e:
+    assert False, 'Double pair production not yet implemented.' # TODO: implement
+  else:
+    intlen_4e = 1e99
+
+  return 1./(1./intlen_pp + 1./intlen_muon + 1./intlen_4e)
+
+# ------------------------------------------------------------------------------
+
+def get_Neps_CMB(eps):
 
   """
   Find differential photon number density of CMB at given photon energy.
@@ -147,34 +169,6 @@ def get_Neps(eps):
 
   return Neps
 
-
-# ------------------------------------------------------------------------------
-
-def get_Neps_muon(eps):
-
-  """
-  Find differential photon number density from muon pair production
-  in the microwave background at a given photon energy.
-  """
-
-  nu = eps / h # Hz; photon frequency
-
-  return
-
- # ------------------------------------------------------------------------------
-
- def get_Neps_4e(eps):
-
-   """
-   Find differential photon number density from double pair production
-   in the microwave background at a given photon energy.
-   """
-
-   nu = eps / h # Hz; photon frequency
-
-   return
-
-
 # ------------------------------------------------------------------------------
 
 def get_Neps_IR(eps):
@@ -184,9 +178,7 @@ def get_Neps_IR(eps):
   background at a given photon energy.
   """
 
-  nu = eps / h # Hz; photon frequency
-
-  return
+  return zeros(len(eps)) # TODO: proper optical/IR background
 
 # ----------------------------------------------------------------------
 # ----------------------------------------------------------------------
@@ -198,7 +190,7 @@ if __name__ == "__main__":
     E *= q_e # eV->J
 
     # calculate mean interaction length for each energy:
-    intlen = [get_intlen(x) for x in E]
+    intlen = [get_intlen(x, get_Neps_CMB) for x in E]
     intlen = np.array(intlen)
     intlen/=Mpc_in_m
 
