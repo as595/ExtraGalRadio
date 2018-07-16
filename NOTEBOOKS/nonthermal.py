@@ -2,7 +2,7 @@ import numpy as np
 
 const_e = 1.6e-19	# Joules [SI units]
 m_e_kg = 9.1e-31	# kg 	 [SI units]
-
+eV2erg = 1.602e-12  # erg    [CGS units]
 
 # ------------------------------------------------------------------------------
 # ------------------------------------------------------------------------------
@@ -56,6 +56,53 @@ def dn_E_E2_erg(E):
 
 	
 	return n_E
+
+# ------------------------------------------------------------------------------
+
+def n_E_AGN_erg(E):
+    
+    E0 = 100e6*eV2erg
+    #E0 = 10e6*eV2erg
+    if (type(E) is np.float64 or float):
+        if (E>=E0):
+            n_E = (E/E0)**(-2.5)
+        if (E<E0):
+            n_E = 0.
+    else:
+        n_E = []
+        for val in E:
+            if (val>=E0):
+                n_E.append((val/E0)**(-2.5))
+            elif (val<E0):
+                n_E.append(0.0)
+
+    n_E = np.array(n_E)
+
+
+    return n_E
+
+# ------------------------------------------------------------------------------
+
+def dn_E_E2_AGN_erg(E):
+    
+    E0 = 100e6*eV2erg
+    #E0 = 10e6*eV2erg
+    if (type(E) is np.float64 or float):
+        if (E>=E0):
+            n_E = (-4.5/(E0)**3)*(E/E0)**(-5.5)
+        if (E<E0):
+            n_E = 0.
+    else:
+        n_E = []
+        for val in E:
+            if (val>=E0):
+                n_E.append((-4.5/(E0)**3)*(val/E0)**(-5.5))
+            elif (val<E0):
+                n_E.append(0.0)
+
+    n_E = np.array(n_E)
+
+    return n_E
 
 # ------------------------------------------------------------------------------
 
